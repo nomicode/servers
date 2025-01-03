@@ -5,7 +5,8 @@
 #     "semver>=3.0.1",
 #     "PyGithub>=2.1.1",
 #     "rich>=13.7.0",
-#     "toml>=0.10.2"
+#     "toml>=0.10.2",
+#     "click>=8.1.7"
 # ]
 # ///
 
@@ -15,21 +16,31 @@ import os
 from datetime import datetime, timedelta
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from dataclasses import dataclass
 import semver
 from github import Github
+import click
 from rich.console import Console
 from rich.table import Table
 
 console = Console()
 
+@dataclass
 class PackageChange:
-    def __init__(self, name: str, current_version: str, has_breaking: bool, has_features: bool, is_python: bool):
-        self.name = name
-        self.current_version = current_version
-        self.has_breaking_changes = has_breaking
-        self.has_new_features = has_features
-        self.is_python = is_python
+    """Represents a package that has changed and needs to be released."""
+    name: str
+    current_version: str
+    has_breaking_changes: bool
+    has_new_features: bool
+    is_python: bool
+
+    def get_change_type(self) -> str:
+        """Get a human-readable description of the change type."""
+        if self.has_breaking_changes:
+            return "BREAKING"
+        if self.has_new_features:
+            return "FEATURES"
+        return "PATCH"
 
 def get_last_release_date() -> str:
     """Get the date of last Monday."""
@@ -37,7 +48,7 @@ def get_last_release_date() -> str:
     last_monday = today - timedelta(days=today.weekday() + 7)
     return last_monday.strftime("%Y-%m-%d")
 
-def run_command(cmd: List[str], cwd: Optional[str] = None) -> str:
+def run_command(cmd: list[str], cwd: str | None = None) -> str:
     """Run a shell command and return its output."""
     try:
         result = subprocess.run(
@@ -53,7 +64,7 @@ def run_command(cmd: List[str], cwd: Optional[str] = None) -> str:
         console.print(e.stderr)
         raise
 
-def get_changed_packages() -> List[PackageChange]:
+def get_changed_packages() -> list[PackageChange]:
     """Get list of packages that have changed since last release."""
     last_release_date = get_last_release_date()
     packages_dir = Path("src")
@@ -159,18 +170,30 @@ def create_github_release(release_notes: str, date: str, is_python: bool = False
         prerelease=False
     )
 
-def main(dry_run: bool = False):
-    """Main release process."""
-    console.print("[bold blue]Starting weekly package release process{} ...[/bold blue]".format(" (DRY RUN)" if dry_run else ""))
+@click.command()
+@click.option("--dry-run", is_flag=True, help="Run in dry-run mode (no changes will be made)")
+@click.option("--skip-npm", is_flag=True, help="Skip NPM package releases")
+@click.option("--skip-python", is_flag=True, help="Skip Python package releases")
+def main(dry_run: bool = False, skip_npm: bool = False, skip_python: bool = False) -> None:
+    """Weekly release process for MCP packages.
+    
+    This script detects changes in packages since last Monday, bumps versions based on
+    conventional commits, generates changelogs, creates GitHub releases, and publishes
+    packages to NPM and PyPI.
+    """
+    console.print(
+        "[bold blue]Starting weekly package release process{} ...[/bold blue]"
+        .format(" (DRY RUN)" if dry_run else "")
+    )
 
     changed_packages = get_changed_packages()
     if not changed_packages:
         console.print("[yellow]No packages have changed since last release[/yellow]")
         return
 
-    # Group packages by type
-    npm_packages = [p for p in changed_packages if not p.is_python]
-    python_packages = [p for p in changed_packages if p.is_python]
+    # Group packages by type, respecting skip flags
+    npm_packages = [] if skip_npm else [p for p in changed_packages if not p.is_python]
+    python_packages = [] if skip_python else [p for p in changed_packages if p.is_python]
 
     # Show summary tables
     if npm_packages:
@@ -180,18 +203,10 @@ def main(dry_run: bool = False):
         table.add_column("Changes")
 
         for pkg in npm_packages:
-            changes = []
-            if pkg.has_breaking_changes:
-                changes.append("BREAKING")
-            if pkg.has_new_features:
-                changes.append("FEATURES")
-            if not changes:
-                changes.append("PATCH")
-
             table.add_row(
                 pkg.name,
                 pkg.current_version,
-                ", ".join(changes)
+                pkg.get_change_type()
             )
 
         console.print(table)
@@ -203,18 +218,10 @@ def main(dry_run: bool = False):
         table.add_column("Changes")
 
         for pkg in python_packages:
-            changes = []
-            if pkg.has_breaking_changes:
-                changes.append("BREAKING")
-            if pkg.has_new_features:
-                changes.append("FEATURES")
-            if not changes:
-                changes.append("PATCH")
-
             table.add_row(
                 pkg.name,
                 pkg.current_version,
-                ", ".join(changes)
+                pkg.get_change_type()
             )
 
         console.print(table)
@@ -322,8 +329,4 @@ def main(dry_run: bool = False):
     console.print("[bold green]Weekly package release completed successfully![/bold green]")
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (no changes will be made)")
-    args = parser.parse_args()
-    main(dry_run=args.dry_run)
+    main()
