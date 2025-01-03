@@ -1,14 +1,16 @@
-"""Weekly release script for MCP servers."""
+"""Weekly release script for MCP packages."""
 
 # /// script
 # dependencies = [
 #     "semver>=3.0.1",
 #     "PyGithub>=2.1.1",
-#     "rich>=13.7.0"
+#     "rich>=13.7.0",
+#     "toml>=0.10.2"
 # ]
 # ///
 
 import json
+import toml
 import os
 from datetime import datetime, timedelta
 import subprocess
@@ -22,11 +24,12 @@ from rich.table import Table
 console = Console()
 
 class PackageChange:
-    def __init__(self, name: str, current_version: str, has_breaking: bool, has_features: bool):
+    def __init__(self, name: str, current_version: str, has_breaking: bool, has_features: bool, is_python: bool):
         self.name = name
         self.current_version = current_version
         self.has_breaking_changes = has_breaking
         self.has_new_features = has_features
+        self.is_python = is_python
 
 def get_last_release_date() -> str:
     """Get the date of last Monday."""
@@ -60,12 +63,29 @@ def get_changed_packages() -> List[PackageChange]:
         if not pkg_dir.is_dir():
             continue
 
-        package_json = pkg_dir / "package.json"
-        if not package_json.exists():
-            continue
+        # Check for Python package
+        pyproject_toml = pkg_dir / "pyproject.toml"
+        if pyproject_toml.exists():
+            with open(pyproject_toml) as f:
+                pkg_data = toml.load(f)
+            try:
+                name = pkg_data["project"]["name"]
+                version = pkg_data["project"]["version"]
+                is_python = True
+            except KeyError:
+                continue
 
-        with open(package_json) as f:
-            pkg_data = json.load(f)
+        # Check for NPM package
+        package_json = pkg_dir / "package.json"
+        if package_json.exists():
+            with open(package_json) as f:
+                pkg_data = json.load(f)
+            name = pkg_data["name"]
+            version = pkg_data["version"]
+            is_python = False
+
+        if not pyproject_toml.exists() and not package_json.exists():
+            continue
 
         # Get commits since last release
         commits = run_command([
@@ -90,10 +110,11 @@ def get_changed_packages() -> List[PackageChange]:
         )
 
         changed_packages.append(PackageChange(
-            name=pkg_data["name"],
-            current_version=pkg_data["version"],
+            name=name,
+            current_version=version,
             has_breaking=has_breaking,
-            has_features=has_features
+            has_features=has_features,
+            is_python=is_python
         ))
 
     return changed_packages
@@ -101,7 +122,7 @@ def get_changed_packages() -> List[PackageChange]:
 def bump_version(current: str, changes: PackageChange) -> str:
     """Determine new version based on changes."""
     ver = semver.Version.parse(current)
-    
+
     if changes.has_breaking_changes:
         return str(ver.bump_major())
     if changes.has_new_features:
@@ -117,10 +138,10 @@ def generate_changelog(pkg_dir: str, since: str) -> str:
         "--",
         pkg_dir
     ])
-    
+
     return f"## Changes\n\n{commits}\n"
 
-def create_github_release(release_notes: str, date: str):
+def create_github_release(release_notes: str, date: str, is_python: bool = False):
     """Create a GitHub release."""
     gh_token = os.environ.get("GITHUB_TOKEN")
     if not gh_token:
@@ -128,10 +149,11 @@ def create_github_release(release_notes: str, date: str):
 
     g = Github(gh_token)
     repo = g.get_repo(os.environ["GITHUB_REPOSITORY"])
-    
+
+    prefix = "weekly-python-release" if is_python else "weekly-release"
     repo.create_git_release(
-        tag=f"weekly-release-{date}",
-        name=f"Weekly Release {date}",
+        tag=f"{prefix}-{date}",
+        name=f"Weekly {'Python ' if is_python else ''}Release {date}",
         message=release_notes,
         draft=False,
         prerelease=False
@@ -139,40 +161,70 @@ def create_github_release(release_notes: str, date: str):
 
 def main():
     """Main release process."""
-    console.print("[bold blue]Starting weekly release process...[/bold blue]")
-    
+    console.print("[bold blue]Starting weekly package release process...[/bold blue]")
+
     changed_packages = get_changed_packages()
     if not changed_packages:
         console.print("[yellow]No packages have changed since last release[/yellow]")
         return
 
-    # Show summary table
-    table = Table(title="Packages to Release")
-    table.add_column("Package")
-    table.add_column("Current Version")
-    table.add_column("Changes")
-    
-    for pkg in changed_packages:
-        changes = []
-        if pkg.has_breaking_changes:
-            changes.append("BREAKING")
-        if pkg.has_new_features:
-            changes.append("FEATURES")
-        if not changes:
-            changes.append("PATCH")
-            
-        table.add_row(
-            pkg.name,
-            pkg.current_version,
-            ", ".join(changes)
-        )
-    
-    console.print(table)
+    # Group packages by type
+    npm_packages = [p for p in changed_packages if not p.is_python]
+    python_packages = [p for p in changed_packages if p.is_python]
 
-    release_notes = []
+    # Show summary tables
+    if npm_packages:
+        table = Table(title="NPM Packages to Release")
+        table.add_column("Package")
+        table.add_column("Current Version")
+        table.add_column("Changes")
+
+        for pkg in npm_packages:
+            changes = []
+            if pkg.has_breaking_changes:
+                changes.append("BREAKING")
+            if pkg.has_new_features:
+                changes.append("FEATURES")
+            if not changes:
+                changes.append("PATCH")
+
+            table.add_row(
+                pkg.name,
+                pkg.current_version,
+                ", ".join(changes)
+            )
+
+        console.print(table)
+
+    if python_packages:
+        table = Table(title="Python Packages to Release")
+        table.add_column("Package")
+        table.add_column("Current Version")
+        table.add_column("Changes")
+
+        for pkg in python_packages:
+            changes = []
+            if pkg.has_breaking_changes:
+                changes.append("BREAKING")
+            if pkg.has_new_features:
+                changes.append("FEATURES")
+            if not changes:
+                changes.append("PATCH")
+
+            table.add_row(
+                pkg.name,
+                pkg.current_version,
+                ", ".join(changes)
+            )
+
+        console.print(table)
+
+    npm_release_notes = []
+    python_release_notes = []
     last_release_date = get_last_release_date()
 
-    for pkg in changed_packages:
+    # Process NPM packages
+    for pkg in npm_packages:
         pkg_name = pkg.name.split("/")[-1]
         pkg_dir = Path("src") / pkg_name
         pkg_json = pkg_dir / "package.json"
@@ -190,9 +242,9 @@ def main():
 
         # Generate changelog
         changelog = generate_changelog(str(pkg_dir), last_release_date)
-        
+
         # Create release notes
-        release_notes.append(f"# {pkg.name}@{new_version}\n\n{changelog}")
+        npm_release_notes.append(f"# {pkg.name}@{new_version}\n\n{changelog}")
 
         # Create git tag
         tag_name = f"{pkg.name}@{new_version}"
@@ -201,27 +253,70 @@ def main():
             "-m", f"Release {tag_name}\n\n{changelog}"
         ])
 
-    # Create commit
-    run_command(["git", "add", "."])
-    run_command([
-        "git", "commit",
-        "-m", "chore: weekly release [skip ci]"
-    ])
+    # Process Python packages
+    for pkg in python_packages:
+        pkg_dir = Path("src") / pkg.name
+        pyproject_toml = pkg_dir / "pyproject.toml"
 
-    # Push changes and tags
-    run_command(["git", "push", "origin", "HEAD", "--tags"])
+        with open(pyproject_toml) as f:
+            pkg_data = toml.load(f)
 
-    # Create GitHub release
-    release_body = "\n\n---\n\n".join(release_notes)
-    date = datetime.now().strftime("%Y-%m-%d")
-    create_github_release(release_body, date)
+        # Bump version
+        new_version = bump_version(pkg_data["project"]["version"], pkg)
+        pkg_data["project"]["version"] = new_version
 
-    # Publish to npm
-    for pkg in changed_packages:
-        console.print(f"[bold green]Publishing {pkg.name}...[/bold green]")
-        run_command(["npm", "publish", "--workspace", pkg.name, "--access", "public"])
+        # Update pyproject.toml
+        with open(pyproject_toml, "w") as f:
+            toml.dump(pkg_data, f)
 
-    console.print("[bold green]Weekly release completed successfully![/bold green]")
+        # Generate changelog
+        changelog = generate_changelog(str(pkg_dir), last_release_date)
+
+        # Create release notes
+        python_release_notes.append(f"# {pkg.name}@{new_version}\n\n{changelog}")
+
+        # Create git tag
+        tag_name = f"{pkg.name}@{new_version}"
+        run_command([
+            "git", "tag", "-a", tag_name,
+            "-m", f"Release {tag_name}\n\n{changelog}"
+        ])
+
+        # Build and publish to PyPI
+        console.print(f"[bold green]Building {pkg.name}...[/bold green]")
+        run_command(["python", "-m", "build"], cwd=str(pkg_dir))
+
+        console.print(f"[bold green]Publishing {pkg.name} to PyPI...[/bold green]")
+        run_command(["python", "-m", "twine", "upload", "dist/*"], cwd=str(pkg_dir))
+
+    if changed_packages:
+        # Create commit
+        run_command(["git", "add", "."])
+        run_command([
+            "git", "commit",
+            "-m", "chore: weekly package release [skip ci]"
+        ])
+
+        # Push changes and tags
+        run_command(["git", "push", "origin", "HEAD", "--tags"])
+
+        # Create GitHub releases
+        date = datetime.now().strftime("%Y-%m-%d")
+
+        if npm_release_notes:
+            npm_release_body = "\n\n---\n\n".join(npm_release_notes)
+            create_github_release(npm_release_body, date)
+
+        if python_release_notes:
+            python_release_body = "\n\n---\n\n".join(python_release_notes)
+            create_github_release(python_release_body, date, is_python=True)
+
+        # Publish NPM packages
+        for pkg in npm_packages:
+            console.print(f"[bold green]Publishing {pkg.name} to npm...[/bold green]")
+            run_command(["npm", "publish", "--workspace", pkg.name, "--access", "public"])
+
+    console.print("[bold green]Weekly package release completed successfully![/bold green]")
 
 if __name__ == "__main__":
     main()
