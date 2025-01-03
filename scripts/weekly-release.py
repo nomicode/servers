@@ -159,9 +159,9 @@ def create_github_release(release_notes: str, date: str, is_python: bool = False
         prerelease=False
     )
 
-def main():
+def main(dry_run: bool = False):
     """Main release process."""
-    console.print("[bold blue]Starting weekly package release process...[/bold blue]")
+    console.print("[bold blue]Starting weekly package release process{} ...[/bold blue]".format(" (DRY RUN)" if dry_run else ""))
 
     changed_packages = get_changed_packages()
     if not changed_packages:
@@ -290,33 +290,40 @@ def main():
         run_command(["python", "-m", "twine", "upload", "dist/*"], cwd=str(pkg_dir))
 
     if changed_packages:
-        # Create commit
-        run_command(["git", "add", "."])
-        run_command([
-            "git", "commit",
-            "-m", "chore: weekly package release [skip ci]"
-        ])
+        if not dry_run:
+            # Create commit
+            run_command(["git", "add", "."])
+            run_command([
+                "git", "commit",
+                "-m", "chore: weekly package release [skip ci]"
+            ])
 
-        # Push changes and tags
-        run_command(["git", "push", "origin", "HEAD", "--tags"])
+            # Push changes and tags
+            run_command(["git", "push", "origin", "HEAD", "--tags"])
 
-        # Create GitHub releases
-        date = datetime.now().strftime("%Y-%m-%d")
+            # Create GitHub releases
+            date = datetime.now().strftime("%Y-%m-%d")
 
-        if npm_release_notes:
-            npm_release_body = "\n\n---\n\n".join(npm_release_notes)
-            create_github_release(npm_release_body, date)
+            if npm_release_notes:
+                npm_release_body = "\n\n---\n\n".join(npm_release_notes)
+                create_github_release(npm_release_body, date)
 
-        if python_release_notes:
-            python_release_body = "\n\n---\n\n".join(python_release_notes)
-            create_github_release(python_release_body, date, is_python=True)
+            if python_release_notes:
+                python_release_body = "\n\n---\n\n".join(python_release_notes)
+                create_github_release(python_release_body, date, is_python=True)
 
-        # Publish NPM packages
-        for pkg in npm_packages:
-            console.print(f"[bold green]Publishing {pkg.name} to npm...[/bold green]")
-            run_command(["npm", "publish", "--workspace", pkg.name, "--access", "public"])
+            # Publish NPM packages
+            for pkg in npm_packages:
+                console.print(f"[bold green]Publishing {pkg.name} to npm...[/bold green]")
+                run_command(["npm", "publish", "--workspace", pkg.name, "--access", "public"])
+        else:
+            console.print("\n[yellow]DRY RUN - No changes were made[/yellow]")
 
     console.print("[bold green]Weekly package release completed successfully![/bold green]")
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true", help="Run in dry-run mode (no changes will be made)")
+    args = parser.parse_args()
+    main(dry_run=args.dry_run)
