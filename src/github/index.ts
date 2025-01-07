@@ -13,6 +13,7 @@ import {
   CreateBranchSchema,
   CreateIssueOptionsSchema,
   CreateIssueSchema,
+  CreatePRReviewCommentSchema,
   CreateOrUpdateFileSchema,
   CreatePullRequestOptionsSchema,
   CreatePullRequestSchema,
@@ -28,6 +29,7 @@ import {
   GitHubIssueSchema,
   GitHubListCommits,
   GitHubListCommitsSchema,
+  GitHubPRReviewCommentSchema,
   GitHubPullRequestSchema,
   GitHubReferenceSchema,
   GitHubRepositorySchema,
@@ -715,9 +717,54 @@ async function getIssue(
   return GitHubIssueSchema.parse(await response.json());
 }
 
+async function createPRReviewComment(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  body: string,
+  commitId: string,
+  path: string,
+  line: number,
+  side?: "LEFT" | "RIGHT",
+  startLine?: number,
+  startSide?: "LEFT" | "RIGHT"
+): Promise<z.infer<typeof GitHubPRReviewCommentSchema>> {
+  const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}/comments`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `token ${GITHUB_PERSONAL_ACCESS_TOKEN}`,
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "github-mcp-server",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      body,
+      commit_id: commitId,
+      path,
+      line,
+      side: side || "RIGHT",
+      start_line: startLine,
+      start_side: startSide
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub API error: ${response.statusText}`);
+  }
+
+  return GitHubPRReviewCommentSchema.parse(await response.json());
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
+      {
+        name: "create_pr_review_comment",
+        description: "Create a review comment on a specific line in a pull request",
+        inputSchema: zodToJsonSchema(CreatePRReviewCommentSchema),
+      },
       {
         name: "create_or_update_file",
         description: "Create or update a single file in a GitHub repository",
@@ -1009,6 +1056,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }).parse(request.params.arguments);
         const issue = await getIssue(args.owner, args.repo, args.issue_number);
         return { toolResult: issue };
+      }
+
+      case "create_pr_review_comment": {
+        const args = CreatePRReviewCommentSchema.parse(request.params.arguments);
+        const { owner, repo, pull_number, body, commit_id, path, line, side, start_line, start_side } = args;
+        const comment = await createPRReviewComment(
+          owner,
+          repo,
+          pull_number,
+          body,
+          commit_id,
+          path,
+          line,
+          side,
+          start_line,
+          start_side
+        );
+        return { content: [{ type: "text", text: JSON.stringify(comment, null, 2) }] };
       }
 
       default:
