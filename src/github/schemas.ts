@@ -670,10 +670,23 @@ export const UpdateIssueOptionsSchema = z.object({
   milestone: z.number().optional()
 });
 
-export const IssueCommentSchema = z.object({
+export const IssueCommentInputSchema = z.object({
   owner: z.string(),
   repo: z.string(),
   issue_number: z.number(),
+  body: z.string()
+});
+
+export const IssueCommentSchema = z.object({
+  url: z.string(),
+  html_url: z.string(),
+  issue_url: z.string(),
+  id: z.number(),
+  node_id: z.string(),
+  user: GitHubIssueAssigneeSchema,
+  created_at: z.string(),
+  updated_at: z.string(),
+  author_association: z.string(),
   body: z.string()
 });
 
@@ -681,6 +694,40 @@ export const GetIssueSchema = z.object({
   owner: z.string().describe("Repository owner (username or organization)"),
   repo: z.string().describe("Repository name"),
   issue_number: z.number().describe("Issue number")
+});
+
+export const GitHubPullRequestReviewCommentSchema = z.object({
+  id: z.number(),
+  node_id: z.string(),
+  url: z.string(),
+  pull_request_review_id: z.number(),
+  diff_hunk: z.string(),
+  path: z.string(),
+  position: z.number(),
+  original_position: z.number(),
+  commit_id: z.string(),
+  original_commit_id: z.string(),
+  user: GitHubIssueAssigneeSchema,
+  body: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  html_url: z.string(),
+  pull_request_url: z.string(),
+  author_association: z.string(),
+  _links: z.object({
+    self: z.object({ href: z.string() }),
+    html: z.object({ href: z.string() }),
+    pull_request: z.object({ href: z.string() })
+  })
+});
+
+export const GitHubPullRequestCommentSchema = z.union([
+  GitHubPullRequestReviewCommentSchema,
+  IssueCommentSchema
+]);
+
+export const GetPullRequestCommentsSchema = RepoParamsSchema.extend({
+  pull_number: z.number().describe("The number that identifies the pull request")
 });
 
 // Export types
@@ -716,4 +763,30 @@ export type SearchCodeResponse = z.infer<typeof SearchCodeResponseSchema>;
 export type SearchIssueItem = z.infer<typeof SearchIssueItemSchema>;
 export type SearchIssuesResponse = z.infer<typeof SearchIssuesResponseSchema>;
 export type SearchUserItem = z.infer<typeof SearchUserItemSchema>;
+// PR Review related schemas
+export const PullRequestReviewSchema = z.object({
+  id: z.number(),
+  node_id: z.string(),
+  user: GitHubIssueAssigneeSchema,
+  body: z.string().nullable(),
+  state: z.enum(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'PENDING']),
+  html_url: z.string(),
+  pull_request_url: z.string(),
+  submitted_at: z.string().nullable(),
+  commit_id: z.string(),
+});
+
+export const CreatePullRequestReviewSchema = RepoParamsSchema.extend({
+  pull_number: z.number().describe("The number that identifies the pull request"),
+  commit_id: z.string().optional().describe("The SHA of the commit that needs a review"),
+  body: z.string().describe("The review body text"),
+  event: z.enum(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']).describe("The review action to perform"),
+  comments: z.array(z.object({
+    path: z.string().describe("The relative path to the file being commented on"),
+    position: z.number().describe("The position in the diff where you want to add a review comment"),
+    body: z.string().describe("The text of the review comment")
+  })).optional().describe("Comments to post as part of the review")
+});
+
+export type PullRequestReview = z.infer<typeof PullRequestReviewSchema>;
 export type SearchUsersResponse = z.infer<typeof SearchUsersResponseSchema>;

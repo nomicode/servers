@@ -34,6 +34,7 @@ import {
   GitHubSearchResponseSchema,
   GitHubTreeSchema,
   IssueCommentSchema,
+  IssueCommentInputSchema,
   ListCommitsSchema,
   ListIssuesOptionsSchema,
   PushFilesSchema,
@@ -45,6 +46,7 @@ import {
   SearchUsersResponseSchema,
   SearchUsersSchema,
   UpdateIssueOptionsSchema,
+  GetPullRequestCommentsSchema,
   type FileOperation,
   type GitHubCommit,
   type GitHubContent,
@@ -58,7 +60,11 @@ import {
   type GitHubTree,
   type SearchCodeResponse,
   type SearchIssuesResponse,
-  type SearchUsersResponse
+  type SearchUsersResponse,
+  CreatePullRequestReviewSchema,
+  type PullRequestReview,
+  PullRequestReviewSchema,
+  GitHubPullRequestCommentSchema
 } from './schemas.js';
 
 const server = new Server(
@@ -667,6 +673,52 @@ async function searchIssues(
   return SearchIssuesResponseSchema.parse(await response.json());
 }
 
+async function getPullRequestComments(
+  owner: string,
+  repo: string,
+  pull_number: number
+): Promise<z.infer<typeof GitHubPullRequestCommentSchema>[]> {
+  // Get both PR review comments and issue comments
+  const [reviewCommentsResponse, issueCommentsResponse] = await Promise.all([
+    fetch(
+      `https://api.github.com/repos/${owner}/${repo}/pulls/${pull_number}/comments`,
+      {
+        headers: {
+          Authorization: `token ${GITHUB_PERSONAL_ACCESS_TOKEN}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "github-mcp-server"
+        }
+      }
+    ),
+    fetch(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${pull_number}/comments`,
+      {
+        headers: {
+          Authorization: `token ${GITHUB_PERSONAL_ACCESS_TOKEN}`,
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "github-mcp-server"
+        }
+      }
+    )
+  ]);
+
+  if (!reviewCommentsResponse.ok) {
+    throw new Error(`GitHub API error: ${reviewCommentsResponse.statusText}`);
+  }
+  if (!issueCommentsResponse.ok) {
+    throw new Error(`GitHub API error: ${issueCommentsResponse.statusText}`);
+  }
+
+  const reviewComments = await reviewCommentsResponse.json();
+  const issueComments = await issueCommentsResponse.json();
+
+  // Combine both types of comments
+  return [
+    ...z.array(GitHubPullRequestCommentSchema).parse(reviewComments),
+    ...z.array(IssueCommentSchema).parse(issueComments)
+  ];
+}
+
 async function searchUsers(
   params: z.infer<typeof SearchUsersSchema>
 ): Promise<SearchUsersResponse> {
@@ -690,6 +742,33 @@ async function searchUsers(
   }
 
   return SearchUsersResponseSchema.parse(await response.json());
+}
+
+async function createPullRequestReview(
+  owner: string,
+  repo: string,
+  pull_number: number,
+  options: Omit<z.infer<typeof CreatePullRequestReviewSchema>, 'owner' | 'repo' | 'pull_number'>
+): Promise<PullRequestReview> {
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${pull_number}/reviews`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `token ${GITHUB_PERSONAL_ACCESS_TOKEN}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "github-mcp-server",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(options)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`GitHub API error: ${response.statusText}`);
+  }
+
+  return PullRequestReviewSchema.parse(await response.json());
 }
 
 async function getIssue(
@@ -784,7 +863,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "add_issue_comment",
         description: "Add a comment to an existing issue",
-        inputSchema: zodToJsonSchema(IssueCommentSchema)
+        inputSchema: zodToJsonSchema(IssueCommentInputSchema)
       },
       {
         name: "search_code",
@@ -806,6 +885,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "get_issue",
         description: "Get details of a specific issue in a GitHub repository.",
         inputSchema: zodToJsonSchema(GetIssueSchema)
+      },
+      {
+        name: "get_pull_request_comments",
+        description: "Get comments on a pull request",
+        inputSchema: zodToJsonSchema(GetPullRequestCommentsSchema)
+      },
+      {
+        name: "create_pull_request_review",
+        description: "Create a review on a pull request",
+        inputSchema: zodToJsonSchema(CreatePullRequestReviewSchema)
       }
     ],
   };
@@ -989,7 +1078,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "add_issue_comment": {
-        const args = IssueCommentSchema.parse(request.params.arguments);
+        const args = IssueCommentInputSchema.parse(request.params.arguments);
         const { owner, repo, issue_number, body } = args;
         const comment = await addIssueComment(owner, repo, issue_number, body);
         return { toolResult: comment };
@@ -1009,6 +1098,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }).parse(request.params.arguments);
         const issue = await getIssue(args.owner, args.repo, args.issue_number);
         return { toolResult: issue };
+      }
+
+      case "get_pull_request_comments": {
+        const args = GetPullRequestCommentsSchema.parse(request.params.arguments);
+        const comments = await getPullRequestComments(args.owner, args.repo, args.pull_number);
+        return { content: [{ type: "text", text: JSON.stringify(comments, null, 2) }] };
+      }
+
+      case "create_pull_request_review": {
+        const args = CreatePullRequestReviewSchema.parse(request.params.arguments);
+        const { owner, repo, pull_number, ...options } = args;
+        const review = await createPullRequestReview(owner, repo, pull_number, options);
+        return { content: [{ type: "text", text: JSON.stringify(review, null, 2) }] };
       }
 
       default:
