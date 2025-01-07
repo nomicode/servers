@@ -683,6 +683,57 @@ export const GetIssueSchema = z.object({
   issue_number: z.number().describe("Issue number")
 });
 
+// Pull Request Update schema
+export const UpdatePullRequestSchema = z.object({
+  owner: z.string().describe("Repository owner (username or organization)"),
+  repo: z.string().describe("Repository name"),
+  pull_number: z.number().describe("Pull request number"),
+  title: z.string().optional().describe("The title of the pull request"),
+  body: z.string().optional().describe("The contents of the pull request"),
+  state: z.enum(["open", "closed"]).optional().describe("State of the pull request"),
+  base: z.string().optional().describe("The name of the branch you want the changes pulled into"),
+  maintainer_can_modify: z.boolean().optional().describe("Whether maintainers can modify the pull request")
+});
+
+// PR Review Comment schemas
+export const CreatePRReviewCommentSchema = z.object({
+  owner: z.string().describe("Repository owner (username or organization)"),
+  repo: z.string().describe("Repository name"),
+  pull_number: z.number().describe("Pull request number"),
+  body: z.string().describe("The text of the review comment"),
+  commit_id: z.string().describe("The SHA of the commit to comment on"),
+  path: z.string().describe("The relative path to the file to comment on"),
+  line: z.number().describe("The line number in the file to comment on"),
+  side: z.enum(["LEFT", "RIGHT"]).optional().describe("Side of the diff to comment on (LEFT for deletions, RIGHT for additions)"),
+  start_line: z.number().optional().describe("The start line number when commenting on multiple lines"),
+  start_side: z.enum(["LEFT", "RIGHT"]).optional().describe("Side of the diff for the start_line")
+});
+
+export const GitHubPRReviewCommentSchema = z.object({
+  url: z.string(),
+  pull_request_review_id: z.number(),
+  id: z.number(),
+  node_id: z.string(),
+  diff_hunk: z.string(),
+  path: z.string(),
+  position: z.number(),
+  original_position: z.number(),
+  commit_id: z.string(),
+  original_commit_id: z.string(),
+  user: GitHubIssueAssigneeSchema,
+  body: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  html_url: z.string(),
+  pull_request_url: z.string(),
+  author_association: z.string(),
+  _links: z.object({
+    self: z.object({ href: z.string() }),
+    html: z.object({ href: z.string() }),
+    pull_request: z.object({ href: z.string() })
+  })
+});
+
 // Export types
 export type GitHubAuthor = z.infer<typeof GitHubAuthorSchema>;
 export type GitHubFork = z.infer<typeof GitHubForkSchema>;
