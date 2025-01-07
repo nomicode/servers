@@ -47,6 +47,7 @@ import {
   SearchUsersResponseSchema,
   SearchUsersSchema,
   UpdateIssueOptionsSchema,
+  UpdatePullRequestSchema,
   type FileOperation,
   type GitHubCommit,
   type GitHubContent,
@@ -717,6 +718,33 @@ async function getIssue(
   return GitHubIssueSchema.parse(await response.json());
 }
 
+async function updatePullRequest(
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  options: Omit<z.infer<typeof UpdatePullRequestSchema>, 'owner' | 'repo' | 'pull_number'>
+): Promise<GitHubPullRequest> {
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `token ${GITHUB_PERSONAL_ACCESS_TOKEN}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "github-mcp-server",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(options)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`GitHub API error: ${response.statusText}`);
+  }
+
+  return GitHubPullRequestSchema.parse(await response.json());
+}
+
 async function createPRReviewComment(
   owner: string,
   repo: string,
@@ -760,6 +788,11 @@ async function createPRReviewComment(
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
+      {
+        name: "update_pull_request",
+        description: "Update an existing pull request",
+        inputSchema: zodToJsonSchema(UpdatePullRequestSchema),
+      },
       {
         name: "create_pr_review_comment",
         description: "Create a review comment on a specific line in a pull request",
@@ -1056,6 +1089,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }).parse(request.params.arguments);
         const issue = await getIssue(args.owner, args.repo, args.issue_number);
         return { toolResult: issue };
+      }
+
+      case "update_pull_request": {
+        const args = UpdatePullRequestSchema.parse(request.params.arguments);
+        const { owner, repo, pull_number, ...options } = args;
+        const pullRequest = await updatePullRequest(owner, repo, pull_number, options);
+        return {
+          content: [{ type: "text", text: JSON.stringify(pullRequest, null, 2) }],
+        };
       }
 
       case "create_pr_review_comment": {

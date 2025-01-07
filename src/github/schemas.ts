@@ -683,6 +683,18 @@ export const GetIssueSchema = z.object({
   issue_number: z.number().describe("Issue number")
 });
 
+// Pull Request Update schema
+export const UpdatePullRequestSchema = z.object({
+  owner: z.string().describe("Repository owner (username or organization)"),
+  repo: z.string().describe("Repository name"),
+  pull_number: z.number().describe("Pull request number"),
+  title: z.string().optional().describe("The title of the pull request"),
+  body: z.string().optional().describe("The contents of the pull request"),
+  state: z.enum(["open", "closed"]).optional().describe("State of the pull request"),
+  base: z.string().optional().describe("The name of the branch you want the changes pulled into"),
+  maintainer_can_modify: z.boolean().optional().describe("Whether maintainers can modify the pull request")
+});
+
 // PR Review Comment schemas
 export const CreatePRReviewCommentSchema = z.object({
   owner: z.string().describe("Repository owner (username or organization)"),
